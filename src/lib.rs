@@ -10,11 +10,11 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use std::fmt::Debug;
 use std::{
-    collections::HashMap,
-    fmt::{Display, Formatter},
-    hash::Hash,
+    cmp,
+    collections::{HashMap, HashSet},
+    fmt::{Debug, Display, Formatter},
+    hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
 };
 
@@ -35,7 +35,7 @@ use std::{
 /// # assert_eq!(item.0, "Rust");
 /// # assert_eq!(item.0, *item);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Item<T>(pub T);
 
 impl<T> Deref for Item<T> {
@@ -52,36 +52,107 @@ impl<T: Display> Display for Item<T> {
     }
 }
 
-/// A type alias for a tuple for two items, representing a comparison.
-pub type Comparison<'a, T> = (&'a Item<T>, &'a Item<T>);
+/// A comparison represents to items that should be compared to each other.
+///
+/// This struct is special in that the order of the items that are compared does not matter. I.e.
+/// `Comparison(a, b) == Comparison(b, a)`.
+///
+/// ```rust
+/// # use impaired::{Comparison, Item};
+/// let rust = Item("rust");
+/// let cpp = Item("cpp");
+/// let comparison1 = Comparison::new(&rust, &cpp);
+/// let comparison2 = Comparison::new(&cpp, &rust);
+/// assert_eq!(comparison1, comparison2);
+/// # assert_eq!(comparison1, comparison1);
+/// # assert_eq!(comparison2, comparison2);
+/// ```
+#[derive(Debug)]
+pub struct Comparison<'a, T: Eq + Hash + Ord> {
+    /// The left item in the comparison.
+    ///
+    /// There is no special property or priority to either the `left` or the `right` field.
+    pub left: &'a Item<T>,
+    /// The right item in the comparison.
+    ///
+    /// There is no special property or priority to either the `left` or the `right` field.
+    pub right: &'a Item<T>,
+}
+
+impl<'a, T: Eq + Hash + Ord> Clone for Comparison<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            left: self.left,
+            right: self.right,
+        }
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Copy for Comparison<'a, T> {}
+
+impl<'a, T: Eq + Hash + Ord> PartialEq<Self> for Comparison<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.left == other.left && self.right == other.right)
+            || (self.left == other.right && self.right == other.left)
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Eq for Comparison<'a, T> {}
+
+impl<'a, T: Eq + Hash + Ord> Comparison<'a, T> {
+    /// Create a new comparison of two [`Item`s`](Item).
+    ///
+    /// The order of `left` and `right` does not matter.
+    pub fn new(left: &'a Item<T>, right: &'a Item<T>) -> Self {
+        Self { left, right }
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Hash for Comparison<'a, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        cmp::min(self.left, self.right).hash(state);
+        cmp::max(self.left, self.right).hash(state);
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Comparison<'a, T> {
+    fn other(&self, item: &'a Item<T>) -> &'a Item<T> {
+        if self.left == item {
+            self.right
+        } else {
+            self.left
+        }
+    }
+}
 
 /// A list of comparisons.
 ///
 /// This is a thin wrapper around a [`Vec`](std::vec::Vec) of [`Comparison`s](Comparison).
 #[derive(Debug, Default)]
-pub struct Comparisons<'a, T>(Vec<Comparison<'a, T>>);
+pub struct Comparisons<'a, T: Eq + Hash + Ord>(HashSet<Comparison<'a, T>>);
 
-impl<'a, T> Comparisons<'a, T> {
+impl<'a, T: Eq + Hash + Ord> Comparisons<'a, T> {
     /// Create a new set of comparisons from a list of [`Item`s](Item).
     ///
     /// The comparisons created will be exhaustive across the list of items provided, ensuring that
     /// for each provided item there is exactly one comparison against every other item.
     ///
     /// ```rust
-    /// # use impaired::{Comparisons, Item};
+    /// # use impaired::{Comparison, Comparisons, Item};
+    /// # use std::collections::HashSet;
     /// let rust = Item("Rust");
     /// let cpp = Item("C++");
     /// let java = Item("Java");
     /// let comparisons = Comparisons::new([&rust, &cpp, &java]);
     /// assert_eq!(comparisons.len(), 3);
-    /// assert_eq!(*comparisons, vec![
-    ///     (&java, &rust),
-    ///     (&java, &cpp),
-    ///     (&cpp, &rust),
-    /// ]);
+    /// assert_eq!(*comparisons, [
+    ///     Comparison::new(&java, &rust),
+    ///     Comparison::new(&java, &cpp),
+    ///     Comparison::new(&cpp, &rust),
+    /// ].into());
     /// ```
     ///
-    /// `Comparisons` automatically dereferences into the underlying `Vec` of
+    /// `Comparisons` automatically dereferences into the underlying `HashSet` of
     /// [`Comparison`s](Comparison), such that you can interact with the comparisons, e.g. for
     /// iteration:
     ///
@@ -92,7 +163,7 @@ impl<'a, T> Comparisons<'a, T> {
     /// # let java = Item("Java");
     /// let comparisons = Comparisons::new([&rust, &cpp, &java]);
     /// for comparison in comparisons.iter() {
-    ///     println!("Comparing '{}' against '{}'", comparison.0, comparison.1);
+    ///     println!("Comparing '{}' against '{}'", comparison.left, comparison.right);
     /// }
     /// ```
     ///
@@ -102,23 +173,25 @@ impl<'a, T> Comparisons<'a, T> {
     /// order in your implementation.
     ///
     /// If you need to follow a specific order, you can dereference the comparisons into the inner
-    /// [`Vec`](std::vec::Vec) of [`Comparison`](Comparison) and ensure that a specific order is
-    /// followed that way:
+    /// [`HashSet`](std::collections::HashSet) of [`Comparison`](Comparison) and then do what is
+    /// necessary to follow the specific order you need.
     ///
     /// ```rust
     /// # use impaired::{Comparison, Comparisons, Item};
+    /// # use std::collections::HashSet;
     /// # let rust = Item("Rust");
     /// # let cpp = Item("C++");
     /// # let java = Item("Java");
     /// let comparisons = Comparisons::new([&rust, &cpp, &java]);
-    /// let inner: &Vec<Comparison<&str>> = &*comparisons;
+    /// let inner: &HashSet<Comparison<&str>> = &*comparisons;
+    /// # assert_eq!(inner.len(), 3);
     /// ```
     pub fn new(items: impl IntoIterator<Item = &'a Item<T>>) -> Self {
-        let mut comparisons = Vec::new();
+        let mut comparisons = HashSet::new();
         let mut it: Vec<&'a Item<T>> = items.into_iter().collect();
         while let Some(item) = it.pop() {
             for other in &it {
-                comparisons.push((item, *other));
+                comparisons.insert(Comparison::new(item, *other));
             }
         }
 
@@ -126,8 +199,8 @@ impl<'a, T> Comparisons<'a, T> {
     }
 }
 
-impl<'a, T> Deref for Comparisons<'a, T> {
-    type Target = Vec<Comparison<'a, T>>;
+impl<'a, T: Eq + Hash + Ord> Deref for Comparisons<'a, T> {
+    type Target = HashSet<Comparison<'a, T>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -239,5 +312,32 @@ impl<'a, T> Deref for Scores<'a, T> {
 impl<'a, T> DerefMut for Scores<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn comparison_order_does_not_matter() {
+        let item1 = Item(1);
+        let item2 = Item(2);
+        let comparison1 = Comparison::new(&item1, &item2);
+        let comparison2 = Comparison::new(&item2, &item1);
+
+        assert_eq!(comparison1, comparison2);
+        let mut hashset = HashSet::new();
+        hashset.insert(comparison1);
+        hashset.insert(comparison2);
+        assert_eq!(hashset.len(), 1);
+
+        assert!(hashset.contains(&comparison1));
+        assert!(hashset.contains(&comparison2));
+
+        let stored_comparison1 = hashset.get(&comparison1).unwrap();
+        let stored_comparison2 = hashset.get(&comparison2).unwrap();
+        assert_eq!(stored_comparison1.left, stored_comparison2.left);
+        assert_eq!(stored_comparison1.right, stored_comparison2.right);
     }
 }

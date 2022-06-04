@@ -34,18 +34,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scores: Scores<_> = Scores::new();
 
     for comparison in comparisons.deref() {
-        println!("A: '{}'  vs.", comparison.0);
-        println!("B: '{}'", comparison.1);
+        println!("A: '{}'  vs.", comparison.left);
+        println!("B: '{}'", comparison.right);
         print!("=> Choose by typing 'a' or 'b': ");
         stdout().flush()?;
         loop {
             let char = getch.getch()?;
             match char.to_ascii_lowercase() as char {
                 'a' => {
-                    scores.track(comparison.0, comparison.1);
+                    scores.track(comparison.left, comparison.right);
                 }
                 'b' => {
-                    scores.track(comparison.1, comparison.0);
+                    scores.track(comparison.right, comparison.left);
                 }
                 _ => {
                     continue;
