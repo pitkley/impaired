@@ -8,7 +8,7 @@
 // except according to those terms.
 
 #![deny(missing_docs)]
-#![doc = include_str!("../README.md")]
+#![doc = include_str!("../../README.md")]
 
 use std::{
     cell::RefCell,
@@ -246,9 +246,9 @@ impl<'a, T: Eq + Hash + Ord> Copy for ComparisonResult<'a, T> {}
 /// subsequent iterations.
 ///
 /// The elements iterated are tuples of the [`Comparison`](Comparison) and a
-/// [`ComparisonResultTracker`](ComparisonResultTacker), allowing the user of this iterator to track
-/// which item in a comparison has won, allowing the iterator to select subsequent iterations such
-/// that the winning item appears again (as long as there is a comparison left for that item).
+/// [`ComparisonResultTracker`](ComparisonResultTracker), allowing the user of this iterator to
+/// track which item in a comparison has won, allowing the iterator to select subsequent iterations
+/// such that the winning item appears again (as long as there is a comparison left for that item).
 ///
 /// ## Example
 ///
@@ -302,6 +302,61 @@ impl<'a, T: Eq + Hash + Ord> RetainItemIterator<'a, T> {
             comparisons_by_item,
             previous_comparison: Rc::new(RefCell::new(None)),
             previous_comparison_result: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Track the winner of the current comparison.
+    ///
+    /// This allows the associated iterator to choose a subsequent comparison that also contains the
+    /// winning item, if possible.
+    ///
+    /// ## This function vs. [`ComparisonResultTracker::winner`](ComparisonResultTracker::winner)
+    ///
+    /// This function and [`ComparisonResultTracker::winner`](ComparisonResultTracker::winner)
+    /// fulfill the same purpose: tracking the winning item of a comparison to influence subsequent
+    /// comparisons the iterator returns. Which to use when simply comes down to how you interact
+    /// with the iterator.
+    ///
+    /// If you are using a simple `for`-loop over the iterator, you won't have mutable access to the
+    /// iterator to call this function here, and should thus instead invoke
+    /// [`ComparisonResultTracker::winner`](ComparisonResultTracker::winner):
+    ///
+    /// ```rust
+    /// # use impaired::{Comparisons, Item};
+    /// # let rust = Item("Rust");
+    /// # let cpp = Item("C++");
+    /// # let java = Item("Java");
+    /// # let comparisons = Comparisons::new([&rust, &cpp, &java]);
+    /// for (comparison, result_tracker) in comparisons.retain_item_iterator() {
+    ///     // Do something to determine the winner, then track it with the result tracker.
+    ///     result_tracker.winner(comparison.left);
+    /// }
+    /// ```
+    ///
+    /// If instead you have a mutable reference to the iterator and are in a situation where you
+    /// cannot keep track of the result-tracker, you can invoke this function here instead:
+    ///
+    /// ```rust
+    /// # use impaired::{Comparisons, Item};
+    /// # let rust = Item("Rust");
+    /// # let cpp = Item("C++");
+    /// # let java = Item("Java");
+    /// # let comparisons = Comparisons::new([&rust, &cpp, &java]);
+    /// let mut iterator = comparisons.retain_item_iterator();
+    /// let (comparison, _) = iterator.next().unwrap();
+    /// // Do something to determine the winner, then track it on the iterator directly.
+    /// iterator.winner(comparison.left);
+    /// ```
+    pub fn winner(&mut self, winner: &'a Item<T>) {
+        if let Some(previous_comparison) = *self.previous_comparison.borrow() {
+            let loser = previous_comparison.other(winner);
+            self.previous_comparison_result
+                .borrow_mut()
+                .replace(ComparisonResult {
+                    comparison: previous_comparison,
+                    winner,
+                    loser,
+                });
         }
     }
 }

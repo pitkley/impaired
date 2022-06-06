@@ -1,23 +1,8 @@
-[package]
-name = "impaired"
-version = "0.1.0"
-edition = "2021"
-authors = ["Pit Kleyersburg <pitkley@googlemail.com>"]
-license = "MIT/Apache-2.0"
-description = "A tool for performing pairwise comparisons"
-homepage = "https://github.com/pitkley/impaired"
-repository = "https://github.com/pitkley/impaired.git"
-readme = "README.md"
+[workspace]
+members = [
+    "impaired",
+    "impaired-web",
 
-include = [
-    "**/*.rs",
-    "Cargo.toml",
-    "LICENSE-*",
+    # Internal
+    "examples",
 ]
-
-[badges]
-maintenance = { status = "actively-developed" }
-
-[dev-dependencies]
-getch = "0.3.1"
-itertools = "0.10.3"
