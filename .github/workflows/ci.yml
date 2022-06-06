@@ -112,6 +112,14 @@ jobs:
         profile: minimal
         toolchain: ${{ matrix.rust }}
         override: true
+    - name: Install wasm-pack
+      uses: giantswarm/install-binary-action@426d9f4e9d7ade2b86c90c8bded4d16b001889a1
+      with:
+        binary: "wasm-pack"
+        version: "v0.10.2"
+        download_url: "https://github.com/rustwasm/${binary}/releases/download/${version}/${binary}-${version}-x86_64-unknown-linux-musl.tar.gz"
+        tarball_binary_path: "*/${binary}"
+        smoke_test: "${binary} --version"
 
     - name: cargo build
       uses: actions-rs/cargo@v1
@@ -126,3 +134,8 @@ jobs:
         args: -- --nocapture
       env:
         TARGET: ${{ matrix.target }}
+
+    - name: wasm-pack build
+      working-directory: impaired-web
+      run: |
+        wasm-pack build --target web
