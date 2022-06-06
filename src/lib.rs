@@ -11,11 +11,13 @@
 #![doc = include_str!("../README.md")]
 
 use std::{
+    cell::RefCell,
     cmp,
     collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::{Deref, DerefMut},
+    rc::Rc,
 };
 
 /// An item for use in pairwise comparisons.
@@ -197,6 +199,21 @@ impl<'a, T: Eq + Hash + Ord> Comparisons<'a, T> {
 
         Self(comparisons)
     }
+
+    /// Get an iterator over the comparisons such that every comparison returned after the first
+    /// iteration contains exactly one of the items the previous iteration contained.
+    ///
+    /// Every element of this iterator returns a tuple of the [`Comparison`](Comparison) and a
+    /// [`ComparisonResultTracker`](ComparisonResultTracker) which you can use to let the iterator
+    /// know which item won. If you track the winner, the iterator will preferably continue with a
+    /// comparison that contains the item that just won. If you do not track the winner, one of the
+    /// two items of the comparison is guaranteed to stay the same across comparisons, although
+    /// which one stays is not guaranteed then.
+    ///
+    /// For more details see [`RetainItemIterator`](RetainItemIterator).
+    pub fn retain_item_iterator(&self) -> RetainItemIterator<T> {
+        RetainItemIterator::new(self)
+    }
 }
 
 impl<'a, T: Eq + Hash + Ord> Deref for Comparisons<'a, T> {
@@ -204,6 +221,183 @@ impl<'a, T: Eq + Hash + Ord> Deref for Comparisons<'a, T> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+struct ComparisonResult<'a, T: Eq + Hash + Ord> {
+    comparison: Comparison<'a, T>,
+    winner: &'a Item<T>,
+    loser: &'a Item<T>,
+}
+
+impl<'a, T: Eq + Hash + Ord> Clone for ComparisonResult<'a, T> {
+    fn clone(&self) -> Self {
+        Self {
+            comparison: self.comparison,
+            winner: self.winner,
+            loser: self.loser,
+        }
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Copy for ComparisonResult<'a, T> {}
+
+/// An iterator ensuring that exactly one item from a previous iteration's comparison is retained to
+/// subsequent iterations.
+///
+/// The elements iterated are tuples of the [`Comparison`](Comparison) and a
+/// [`ComparisonResultTracker`](ComparisonResultTacker), allowing the user of this iterator to track
+/// which item in a comparison has won, allowing the iterator to select subsequent iterations such
+/// that the winning item appears again (as long as there is a comparison left for that item).
+///
+/// ## Example
+///
+/// ```rust
+/// # use impaired::{Comparisons, Item};
+/// let rust = Item("Rust");
+/// let cpp = Item("C++");
+/// let java = Item("Java");
+/// let comparisons = Comparisons::new([&rust, &cpp, &java]);
+/// for (comparison, result_tracker) in comparisons.retain_item_iterator() {
+///     println!("{} vs. {}", comparison.left, comparison.right);
+///     // You would now let something choose the winner, and then optionally track this winner such
+///     // that it will appear in the next comparison again.
+///     result_tracker.winner(comparison.left);
+/// }
+/// ```
+pub struct RetainItemIterator<'a, T: Eq + Hash + Ord> {
+    comparisons_by_item: HashMap<&'a Item<T>, HashSet<Comparison<'a, T>>>,
+    previous_comparison: Rc<RefCell<Option<Comparison<'a, T>>>>,
+    previous_comparison_result: Rc<RefCell<Option<ComparisonResult<'a, T>>>>,
+}
+
+impl<'a, T: Eq + Hash + Ord> RetainItemIterator<'a, T> {
+    fn new(input: &Comparisons<'a, T>) -> Self {
+        let mut comparisons_by_item: HashMap<_, HashSet<_>> = HashMap::new();
+
+        for comparison in input.deref() {
+            comparisons_by_item
+                .entry(comparison.left)
+                .and_modify(|v| {
+                    v.insert(*comparison);
+                })
+                .or_insert_with(|| {
+                    let mut hashset = HashSet::new();
+                    hashset.insert(*comparison);
+                    hashset
+                });
+            comparisons_by_item
+                .entry(comparison.right)
+                .and_modify(|v| {
+                    v.insert(*comparison);
+                })
+                .or_insert_with(|| {
+                    let mut hashset = HashSet::new();
+                    hashset.insert(*comparison);
+                    hashset
+                });
+        }
+
+        Self {
+            comparisons_by_item,
+            previous_comparison: Rc::new(RefCell::new(None)),
+            previous_comparison_result: Rc::new(RefCell::new(None)),
+        }
+    }
+}
+
+/// A helper type with which to track the result of a comparison during iteration.
+///
+/// This allows an associated iterator to decide which comparison to choose next based on the winner
+/// and/or loser of the previous iteration. The [`RetainItemIterator`](RetainItemIterator) is one
+/// example.
+pub struct ComparisonResultTracker<'a, T: Eq + Hash + Ord> {
+    comparison: Comparison<'a, T>,
+    comparison_result: Rc<RefCell<Option<ComparisonResult<'a, T>>>>,
+}
+
+impl<'a, T: Eq + Hash + Ord> ComparisonResultTracker<'a, T> {
+    /// Track the winner of the current comparison.
+    ///
+    /// This allows the associated iterator to choose a subsequent comparison that also contains the
+    /// winning item, if possible.
+    pub fn winner(self, winner: &'a Item<T>) {
+        let loser = self.comparison.other(winner);
+        self.comparison_result
+            .borrow_mut()
+            .replace(ComparisonResult {
+                comparison: self.comparison,
+                winner,
+                loser,
+            });
+    }
+}
+
+impl<'a, T: Eq + Hash + Ord> Iterator for RetainItemIterator<'a, T> {
+    type Item = (Comparison<'a, T>, ComparisonResultTracker<'a, T>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (winner, loser) =
+            if let Some(previous_comparison_result) = *self.previous_comparison_result.borrow() {
+                (
+                    previous_comparison_result.winner,
+                    previous_comparison_result.loser,
+                )
+            } else if let Some(previous_comparison) = *self.previous_comparison.borrow() {
+                (previous_comparison.left, previous_comparison.right)
+            } else {
+                match self
+                    .comparisons_by_item
+                    .iter()
+                    .next()
+                    .expect("at least one item has to exist")
+                    .1
+                    .iter()
+                    .next()
+                    .copied()
+                {
+                    Some(seed_comparison) => (seed_comparison.left, seed_comparison.right),
+                    None => return None,
+                }
+            };
+
+        let winner_candidate = self
+            .comparisons_by_item
+            .get_mut(winner)
+            .expect("the referenced item has to exist")
+            .iter()
+            .next()
+            .copied();
+        let loser_candidate = self
+            .comparisons_by_item
+            .get_mut(loser)
+            .expect("the referenced item has to exist")
+            .iter()
+            .next()
+            .copied();
+
+        match (winner_candidate, loser_candidate) {
+            (Some(comparison), _) | (None, Some(comparison)) => {
+                self.comparisons_by_item
+                    .get_mut(comparison.left)
+                    .expect("the referenced item has to exist")
+                    .remove(&comparison);
+                self.comparisons_by_item
+                    .get_mut(comparison.right)
+                    .expect("the referenced item has to exist")
+                    .remove(&comparison);
+
+                self.previous_comparison.borrow_mut().replace(comparison);
+                Some((
+                    comparison,
+                    ComparisonResultTracker {
+                        comparison,
+                        comparison_result: self.previous_comparison_result.clone(),
+                    },
+                ))
+            }
+            (None, None) => None,
+        }
     }
 }
 
@@ -339,5 +533,56 @@ mod test {
         let stored_comparison2 = hashset.get(&comparison2).unwrap();
         assert_eq!(stored_comparison1.left, stored_comparison2.left);
         assert_eq!(stored_comparison1.right, stored_comparison2.right);
+    }
+
+    #[test]
+    fn retain_item_iterator_with_tracking() {
+        let item1 = Item(1);
+        let item2 = Item(2);
+        let item3 = Item(3);
+        let comparisons = Comparisons::new([&item1, &item2, &item3]);
+        let mut retain_item_iterator = comparisons.retain_item_iterator();
+
+        let (comparison1, result_tracker) = retain_item_iterator.next().unwrap();
+        result_tracker.winner(comparison1.left);
+
+        let (comparison2, result_tracker) = retain_item_iterator.next().unwrap();
+        assert!(comparison2.left == comparison1.left || comparison2.right == comparison1.left);
+        // We want to explicitly track the same winner as in `comparison1`, so this is not a typo!
+        result_tracker.winner(comparison1.left);
+
+        let (comparison3, _) = retain_item_iterator.next().unwrap();
+        assert!(comparison3.left != comparison1.left && comparison3.right != comparison1.left);
+        assert!(
+            comparison3.left == comparison2.left
+                || comparison3.right == comparison2.left
+                || comparison3.left == comparison2.right
+                || comparison3.right == comparison2.right
+        );
+
+        assert!(retain_item_iterator.next().is_none());
+    }
+
+    #[test]
+    fn retain_item_iterator_without_tracking() {
+        let item1 = Item(1);
+        let item2 = Item(2);
+        let item3 = Item(3);
+        let item4 = Item(4);
+        let item5 = Item(5);
+        let comparisons = Comparisons::new([&item1, &item2, &item3, &item4, &item5]);
+        let mut previous_comparison: Option<Comparison<usize>> = None;
+        for (comparison, result_tracker) in comparisons.retain_item_iterator() {
+            if let Some(previous_comparison) = previous_comparison {
+                assert!(
+                    comparison.left == previous_comparison.left
+                        || comparison.right == previous_comparison.left
+                        || comparison.left == previous_comparison.right
+                        || comparison.right == previous_comparison.right
+                );
+            }
+            previous_comparison.replace(comparison);
+            result_tracker.winner(comparison.left);
+        }
     }
 }
