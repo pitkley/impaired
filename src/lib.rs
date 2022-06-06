@@ -246,9 +246,9 @@ impl<'a, T: Eq + Hash + Ord> Copy for ComparisonResult<'a, T> {}
 /// subsequent iterations.
 ///
 /// The elements iterated are tuples of the [`Comparison`](Comparison) and a
-/// [`ComparisonResultTracker`](ComparisonResultTacker), allowing the user of this iterator to track
-/// which item in a comparison has won, allowing the iterator to select subsequent iterations such
-/// that the winning item appears again (as long as there is a comparison left for that item).
+/// [`ComparisonResultTracker`](ComparisonResultTracker), allowing the user of this iterator to
+/// track which item in a comparison has won, allowing the iterator to select subsequent iterations
+/// such that the winning item appears again (as long as there is a comparison left for that item).
 ///
 /// ## Example
 ///
