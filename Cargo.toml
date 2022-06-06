@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "impaired",
+    "impaired-web",
 
     # Internal
     "examples",

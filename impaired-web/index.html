@@ -1,0 +1,24 @@
+<html>
+<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+    <title>impaired-web</title>
+</head>
+<body>
+<script type="module">
+    import init, {nextComparison, printScores, trackResult} from './pkg/impaired_web.js';
+
+    async function run() {
+        await init();
+
+        let data;
+        while (data = nextComparison()) {
+            console.log(`'${data.left.item}' vs. '${data.right.item}'`);
+            trackResult(data.left, data.right);
+        }
+
+        printScores();
+    }
+    run();
+</script>
+</body>
+</html>
