@@ -203,7 +203,7 @@ where
 
     /// Track the result of a single pairwise comparison.
     ///
-    /// The winning item's score will be increased by one, the loosing item's score will be kept as
+    /// The winning item's score will be increased by one, the losing item's score will be kept as
     /// is (although it will be set to zero if it hasn't been tracked yet).
     ///
     /// ```rust
@@ -219,12 +219,12 @@ where
     /// assert_eq!(scores[&rust], 1);
     /// assert_eq!(scores[&cpp], 0);
     /// ```
-    pub fn track(&mut self, winner: &'a Item<T>, looser: &'a Item<T>) {
+    pub fn track(&mut self, winner: &'a Item<T>, loser: &'a Item<T>) {
         self.0
             .entry(winner)
             .and_modify(|count| *count += 1)
             .or_insert(1);
-        self.0.entry(looser).or_insert(0);
+        self.0.entry(loser).or_insert(0);
     }
 }
 
