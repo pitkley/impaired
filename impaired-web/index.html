@@ -5,10 +5,18 @@
 </head>
 <body>
 <script type="module">
-    import init, {nextComparison, printScores, trackResult} from './pkg/impaired_web.js';
+    import init, {nextComparison, pushItem, printScores, startComparison, trackResult} from './pkg/impaired_web.js';
 
     async function run() {
         await init();
+
+        pushItem("C++");
+        pushItem("Java");
+        pushItem("Rust");
+        // NOTE: we could skip this call `startComparison` here, as `nextComparison` will ensure that a new comparison
+        //       is started if it hasn't already. This would lead to unexpected behaviour though if a second comparison
+        //       is desired.
+        startComparison();
 
         let data;
         while (data = nextComparison()) {
