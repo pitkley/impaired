@@ -14,5 +14,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 impaired = { path = "../impaired" }
+itertools = "0.10.3"
 ouroboros = "0.15.0"
 wasm-bindgen = "0.2.81"

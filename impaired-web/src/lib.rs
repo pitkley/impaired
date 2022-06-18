@@ -8,6 +8,7 @@
 // except according to those terms.
 
 use impaired::{Comparisons, RetainItemIterator, Scores};
+use itertools::Itertools;
 use ouroboros::self_referencing;
 use std::{
     cell::RefCell,
@@ -31,6 +32,15 @@ pub struct Item {
     pub item: String,
 }
 
+impl Item {
+    fn new(s: String) -> Self {
+        Self {
+            hash: hash_one(&s),
+            item: s,
+        }
+    }
+}
+
 #[wasm_bindgen(getter_with_clone)]
 pub struct Comparison {
     pub left: Item,
@@ -52,22 +62,66 @@ struct OngoingComparison {
 }
 
 thread_local! {
+    static PUSHED_ITEMS: RefCell<Vec<Item>> = RefCell::new(Vec::new());
     static ONGOING_COMPARISON: RefCell<Option<OngoingComparison>> = RefCell::new(None);
+}
+
+fn pushed_items_mut<F, R>(action: F) -> R
+where
+    F: FnOnce(&mut Vec<Item>) -> R,
+{
+    PUSHED_ITEMS.with(|pushed_items_rc| action(&mut pushed_items_rc.borrow_mut()))
+}
+
+fn ongoing_comparison<F, R>(action: F) -> R
+where
+    F: FnOnce(&Option<OngoingComparison>) -> R,
+{
+    ONGOING_COMPARISON.with(|ongoing_comparison_rc| action(&ongoing_comparison_rc.borrow()))
+}
+
+fn ongoing_comparison_mut<F, R>(action: F) -> R
+where
+    F: FnOnce(&mut Option<OngoingComparison>) -> R,
+{
+    ONGOING_COMPARISON.with(|ongoing_comparison_rc| action(&mut ongoing_comparison_rc.borrow_mut()))
 }
 
 #[wasm_bindgen(start)]
 pub fn main() -> Result<(), JsValue> {
-    let rust = impaired::Item("Rust".to_owned());
-    let cpp = impaired::Item("C++".to_owned());
-    let java = impaired::Item("Java".to_owned());
-    ONGOING_COMPARISON.with(|comparison| {
-        comparison.borrow_mut().replace(
+    Ok(())
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+#[wasm_bindgen(js_name = pushItem)]
+pub fn push_item(item: String) {
+    let item = Item::new(item);
+    pushed_items_mut(|pushed_items| pushed_items.push(item));
+}
+
+#[wasm_bindgen(js_name = resetComparison)]
+pub fn reset_comparison() {
+    ongoing_comparison_mut(Option::take);
+}
+
+#[wasm_bindgen(js_name = startComparison)]
+pub fn start_comparison() {
+    ongoing_comparison_mut(|ongoing_comparison| {
+        ongoing_comparison.replace(
             OngoingComparisonBuilder {
                 items: {
                     let mut map = HashMap::new();
-                    map.insert(hash_one(&rust), rust);
-                    map.insert(hash_one(&cpp), cpp);
-                    map.insert(hash_one(&java), java);
+                    pushed_items_mut(|pushed_items| {
+                        for item in pushed_items.iter() {
+                            map.insert(item.hash, impaired::Item(item.item.clone()));
+                        }
+                        pushed_items.clear();
+                    });
                     map
                 },
                 comparisons_builder: |items: &HashMap<u64, impaired::Item<String>>| {
@@ -81,42 +135,35 @@ pub fn main() -> Result<(), JsValue> {
             .build(),
         )
     });
-    Ok(())
-}
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
 }
 
 #[wasm_bindgen(js_name = nextComparison)]
 pub fn next_comparison() -> Option<Comparison> {
-    ONGOING_COMPARISON.with(|ongoing_comparison_rc| {
-        ongoing_comparison_rc
-            .borrow_mut()
-            .as_mut()
-            .and_then(|ongoing_comparison| {
-                ongoing_comparison.with_iterator_mut(|iterator| {
-                    iterator.next().map(|(comparison, _)| Comparison {
-                        left: Item {
-                            hash: hash_one(comparison.left),
-                            item: comparison.left.0.to_owned(),
-                        },
-                        right: Item {
-                            hash: hash_one(comparison.right),
-                            item: comparison.right.0.to_owned(),
-                        },
-                    })
+    if ongoing_comparison(|ongoing_comparison| ongoing_comparison.is_none()) {
+        start_comparison();
+    }
+    ongoing_comparison_mut(|ongoing_comparison| {
+        ongoing_comparison.as_mut().and_then(|ongoing_comparison| {
+            ongoing_comparison.with_iterator_mut(|iterator| {
+                iterator.next().map(|(comparison, _)| Comparison {
+                    left: Item {
+                        hash: hash_one(comparison.left),
+                        item: comparison.left.0.to_owned(),
+                    },
+                    right: Item {
+                        hash: hash_one(comparison.right),
+                        item: comparison.right.0.to_owned(),
+                    },
                 })
             })
+        })
     })
 }
 
 #[wasm_bindgen(js_name = trackResult)]
 pub fn track_result(winner: Item, loser: Item) {
-    ONGOING_COMPARISON.with(|ongoing_comparison_rc| {
-        if let Some(ongoing_comparison) = ongoing_comparison_rc.borrow_mut().as_mut() {
+    ongoing_comparison_mut(|ongoing_comparison| {
+        if let Some(ongoing_comparison) = ongoing_comparison.as_mut() {
             ongoing_comparison.with_mut(|fields| {
                 match (
                     fields.items.get(&winner.hash),
@@ -140,10 +187,10 @@ pub fn track_result(winner: Item, loser: Item) {
 
 #[wasm_bindgen(js_name = printScores)]
 pub fn print_scores() {
-    ONGOING_COMPARISON.with(|ongoing_comparison_rc| {
-        if let Some(ongoing_comparison) = ongoing_comparison_rc.borrow_mut().as_mut() {
+    ongoing_comparison_mut(|ongoing_comparison| {
+        if let Some(ongoing_comparison) = ongoing_comparison.as_mut() {
             let scores: &Scores<String> = ongoing_comparison.borrow_scores();
-            for (item, score) in scores.iter() {
+            for (item, score) in scores.iter().sorted_by(|(_, a), (_, b)| b.cmp(a)) {
                 log(&format!("- {} ({} points)", item, score));
             }
         }
