@@ -8,6 +8,7 @@
 // except according to those terms.
 
 use impaired::{Comparisons, RetainItemIterator, Scores};
+use indexmap::IndexSet;
 use ouroboros::self_referencing;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
@@ -70,20 +71,20 @@ struct OngoingComparison {
 }
 
 thread_local! {
-    static PUSHED_ITEMS: RefCell<Vec<Item>> = RefCell::new(Vec::new());
+    static PUSHED_ITEMS: RefCell<IndexSet<Item>> = RefCell::new(IndexSet::new());
     static ONGOING_COMPARISON: RefCell<Option<OngoingComparison>> = RefCell::new(None);
 }
 
 fn pushed_items<F, R>(action: F) -> R
 where
-    F: FnOnce(&Vec<Item>) -> R,
+    F: FnOnce(&IndexSet<Item>) -> R,
 {
     PUSHED_ITEMS.with(|pushed_items_rc| action(&pushed_items_rc.borrow()))
 }
 
 fn pushed_items_mut<F, R>(action: F) -> R
 where
-    F: FnOnce(&mut Vec<Item>) -> R,
+    F: FnOnce(&mut IndexSet<Item>) -> R,
 {
     PUSHED_ITEMS.with(|pushed_items_rc| action(&mut pushed_items_rc.borrow_mut()))
 }
@@ -110,7 +111,9 @@ pub fn main() -> Result<(), JsValue> {
 #[wasm_bindgen(js_name = pushItem)]
 pub fn push_item(item: String) {
     let item = Item::new(item);
-    pushed_items_mut(|pushed_items| pushed_items.push(item));
+    pushed_items_mut(|pushed_items| {
+        pushed_items.insert(item);
+    });
 }
 
 #[wasm_bindgen(js_name = resetComparison)]
