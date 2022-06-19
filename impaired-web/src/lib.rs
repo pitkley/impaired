@@ -8,8 +8,9 @@
 // except according to those terms.
 
 use impaired::{Comparisons, RetainItemIterator, Scores};
-use itertools::Itertools;
 use ouroboros::self_referencing;
+use serde::Serialize;
+use serde_wasm_bindgen::Serializer;
 use std::{
     cell::RefCell,
     collections::{hash_map::DefaultHasher, HashMap},
@@ -26,7 +27,7 @@ fn hash_one<T: Hash>(x: T) -> u64 {
 pub type ItemHash = u64;
 
 #[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
+#[derive(Serialize, Clone, Eq, PartialEq, Hash)]
 pub struct Item {
     pub hash: ItemHash,
     pub item: String,
@@ -47,6 +48,13 @@ pub struct Comparison {
     pub right: Item,
 }
 
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Serialize, Clone)]
+pub struct Score {
+    pub item: Item,
+    pub score: u32,
+}
+
 #[self_referencing]
 struct OngoingComparison {
     items: HashMap<ItemHash, impaired::Item<String>>,
@@ -64,6 +72,13 @@ struct OngoingComparison {
 thread_local! {
     static PUSHED_ITEMS: RefCell<Vec<Item>> = RefCell::new(Vec::new());
     static ONGOING_COMPARISON: RefCell<Option<OngoingComparison>> = RefCell::new(None);
+}
+
+fn pushed_items<F, R>(action: F) -> R
+where
+    F: FnOnce(&Vec<Item>) -> R,
+{
+    PUSHED_ITEMS.with(|pushed_items_rc| action(&pushed_items_rc.borrow()))
 }
 
 fn pushed_items_mut<F, R>(action: F) -> R
@@ -90,12 +105,6 @@ where
 #[wasm_bindgen(start)]
 pub fn main() -> Result<(), JsValue> {
     Ok(())
-}
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
 }
 
 #[wasm_bindgen(js_name = pushItem)]
@@ -137,9 +146,14 @@ pub fn start_comparison() {
     });
 }
 
+#[wasm_bindgen(js_name = hasOngoingComparison)]
+pub fn has_ongoing_comparison() -> bool {
+    ongoing_comparison(|ongoing_comparison| ongoing_comparison.is_some())
+}
+
 #[wasm_bindgen(js_name = nextComparison)]
 pub fn next_comparison() -> Option<Comparison> {
-    if ongoing_comparison(|ongoing_comparison| ongoing_comparison.is_none()) {
+    if !has_ongoing_comparison() {
         start_comparison();
     }
     ongoing_comparison_mut(|ongoing_comparison| {
@@ -165,34 +179,54 @@ pub fn track_result(winner: Item, loser: Item) {
     ongoing_comparison_mut(|ongoing_comparison| {
         if let Some(ongoing_comparison) = ongoing_comparison.as_mut() {
             ongoing_comparison.with_mut(|fields| {
-                match (
+                if let (Some(winner), Some(loser)) = (
                     fields.items.get(&winner.hash),
                     fields.items.get(&loser.hash),
                 ) {
-                    (Some(winner), Some(loser)) => {
-                        log(&format!(
-                            "Tracking result for winner={winner}, loser={loser}"
-                        ));
-                        fields.iterator.winner(winner);
-                        fields.scores.track(winner, loser);
-                    }
-                    _ => {
-                        log("Did not find one of the provided items, can't track result.");
-                    }
-                };
+                    fields.iterator.winner(winner);
+                    fields.scores.track(winner, loser);
+                }
             })
         }
     });
 }
 
-#[wasm_bindgen(js_name = printScores)]
-pub fn print_scores() {
-    ongoing_comparison_mut(|ongoing_comparison| {
-        if let Some(ongoing_comparison) = ongoing_comparison.as_mut() {
+#[wasm_bindgen(js_name = getScores)]
+pub fn get_scores() -> Result<JsValue, serde_wasm_bindgen::Error> {
+    ongoing_comparison(|ongoing_comparison| {
+        let mut results = Vec::new();
+        if let Some(ongoing_comparison) = ongoing_comparison {
             let scores: &Scores<String> = ongoing_comparison.borrow_scores();
-            for (item, score) in scores.iter().sorted_by(|(_, a), (_, b)| b.cmp(a)) {
-                log(&format!("- {} ({} points)", item, score));
+            for (item, score) in scores.iter() {
+                results.push(Score {
+                    item: Item::new(item.0.clone()),
+                    score: *score as u32,
+                });
             }
         }
+
+        (&results).serialize(&Serializer::new().serialize_large_number_types_as_bigints(true))
     })
+}
+
+#[wasm_bindgen(js_name = getItems)]
+pub fn get_items() -> Result<JsValue, serde_wasm_bindgen::Error> {
+    if !has_ongoing_comparison() {
+        pushed_items(|pushed_items| {
+            pushed_items.serialize(&Serializer::new().serialize_large_number_types_as_bigints(true))
+        })
+    } else {
+        ongoing_comparison(|ongoing_comparison| {
+            if let Some(ongoing_comparison) = ongoing_comparison {
+                let items = ongoing_comparison.borrow_items();
+                items
+                    .values()
+                    .map(|impaired_item| Item::new(impaired_item.0.clone()))
+                    .collect::<Vec<_>>()
+                    .serialize(&Serializer::new().serialize_large_number_types_as_bigints(true))
+            } else {
+                serde_wasm_bindgen::to_value(&())
+            }
+        })
+    }
 }
