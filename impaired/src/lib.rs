@@ -169,6 +169,10 @@ impl<'a, T: Eq + Hash + Ord> Comparisons<'a, T> {
     /// }
     /// ```
     ///
+    /// ## Panics
+    ///
+    /// Calling this function panics if you don't provide at least two items.
+    ///
     /// ## Order of comparisons
     ///
     /// Currently there is no guarantee about the order of the items returned. Do not rely on the
@@ -195,6 +199,10 @@ impl<'a, T: Eq + Hash + Ord> Comparisons<'a, T> {
             for other in &it {
                 comparisons.insert(Comparison::new(item, *other));
             }
+        }
+
+        if comparisons.is_empty() {
+            panic!("at least two items are required to construct the comparisons");
         }
 
         Self(comparisons)
@@ -639,5 +647,17 @@ mod test {
             previous_comparison.replace(comparison);
             result_tracker.winner(comparison.left);
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "at least two items are required to construct the comparisons")]
+    fn no_item_comparisons_construction_panics() {
+        Comparisons::<()>::new([]);
+    }
+
+    #[test]
+    #[should_panic(expected = "at least two items are required to construct the comparisons")]
+    fn single_item_comparisons_construction_panics() {
+        Comparisons::new([&Item(0)]);
     }
 }
